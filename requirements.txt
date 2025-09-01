@@ -1,6 +1,0 @@
-transformers
-datasets
-evaluate
-pandas
-streamlit
-torch
