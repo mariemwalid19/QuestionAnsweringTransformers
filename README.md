@@ -1,75 +1,73 @@
-Question Answering with Transformers
+# Question Answering with Transformers (Generative QA)
 
-##  Project Overview
+## Project Overview
 
-This project implements a **Question Answering (QA) system** using **Transformer-based models** (DistilBERT) fine-tuned on the **SQuAD v1.1 dataset**.
-The system can take a **context (passage)** and a **question**, then extract the most relevant **answer span**.
+This project implements a **Generative Question Answering system** using **Transformer-based Seq2Seq models (T5 / FLAN-T5)**.
+Instead of extracting an exact answer span from the text, the system **generates a natural-language answer** based on semantic understanding of the provided context.
 
-A **Streamlit interface** is built to allow interactive testing and evaluation.
+The application accepts a **context (short or long document)** and a **question**, then produces a **clear, paraphrased answer** written in the model’s own words.
+
+A **Streamlit web interface** is provided for interactive testing with pasted text or uploaded TXT files.
 
 ---
 
-##  Tools & Libraries
+## Tools & Libraries
 
-* **Python 3.12**
-* [Hugging Face Transformers](https://huggingface.co/transformers/)
-* [Tokenizers](https://github.com/huggingface/tokenizers)
-* [Datasets / Evaluate](https://huggingface.co/docs/evaluate)
-* **Pandas**
+* **Python 3.x**
+* **Hugging Face Transformers**
+* **Hugging Face Tokenizers**
 * **Streamlit**
+* **PyTorch (via Transformers)**
 
 ---
 
-##  Dataset
+## Model
 
-* **SQuAD v1.1 (Stanford Question Answering Dataset)** from Kaggle.
-* Train set used for fine-tuning (sample: 2,000 examples).
-* Dev set used for evaluation (sample: 500 examples).
+* **Model type:** Seq2Seq (Text-to-Text)
+* **Primary model used:** `google/flan-t5-small`
+* **Task:** Generative Question Answering (not span extraction)
 
----
+The model is prompted to:
 
-##  Model Training
-
-* **Base model:** `distilbert-base-uncased`
-* **Fine-tuning task:** Question Answering (span prediction)
-* **Training config (quick run):**
-
-  * Batch size: 8
-  * Epochs: 1
-  * Learning rate: 3e-5
-  * Gradient accumulation: 1
-  * CPU training (lightweight, no GPU)
-* **Output directory:** `distilbert-qa-quick-model/`
+* Answer questions **only using the given context**
+* **Paraphrase** information instead of copying sentences
+* Produce **coherent natural-language answers**, even for multi-sentence responses
 
 ---
 
-##  Results
+## Key Design Choices
 
-### Training Loss
+* **Generative QA instead of extractive QA**
+  Answers are generated as full sentences rather than copied spans from the context.
 
-* Step 100 → **2.57**
-* Step 200 → **2.25**
-* Final Training Loss \~ **2.25**
+* **Chunking for long documents**
+  Long contexts are split into overlapping chunks to stay within model limits.
 
-### Evaluation Metrics (dev set, 500 examples)
+* **Prompt-controlled answer style**
+  The user can choose how the answer is written:
 
-* **Exact Match (EM):** 41.0%
-* **F1 Score:** 54.9%
-* **Eval Loss:** 2.50
+  * Direct answer
+  * Detailed explanation
+  * Step-by-step reasoning
+  * Summarize then answer
 
- The model is able to extract reasonable answers despite short training.
+* **Hallucination control**
+  The prompt explicitly restricts answers to the provided context and discourages unsupported claims.
 
 ---
 
-##  Streamlit App
+## Streamlit Application
 
-A simple **Streamlit web app** was built for interaction.
+A lightweight Streamlit app is used to test the system interactively.
 
 ### Features
 
-* Paste a **context/passage** and enter a **question** → get the extracted answer + confidence score.
-* Upload a **SQuAD v1.1 JSON file** → evaluate EM & F1 (sample size configurable).
-* Option to use either the **local fine-tuned model** (`distilbert-qa-quick-model`) or Hugging Face pre-trained models (BERT, RoBERTa, ALBERT).
+* Paste a **context/passage** directly into the app
+* Upload a **TXT file** as context
+* Enter a custom **question**
+* Choose an **answer style**
+* Control **maximum answer length**
+* Get a **clear, paraphrased answer** generated from the context
 
 ### Run the App
 
@@ -79,26 +77,52 @@ streamlit run streamlit_app.py
 
 ---
 
-##  Bonus (Model Comparison)
+## Example Behavior
 
-* **DistilBERT fine-tuned (local)**: EM = 41.0, F1 = 54.9
-* **BERT-base (pretrained, no fine-tuning)**: typically \~20–30 EM, \~40 F1 (worse without training).
-* **RoBERTa-base (pretrained)**: slightly stronger, but slower to load.
+**Input:**
+
+* Context: A multi-paragraph article about Artificial Intelligence
+* Question: *How has recent technological progress contributed to the growth of AI, and what challenges remain?*
+
+**Output:**
+
+* A coherent paragraph explaining:
+
+  * How GPUs, cloud computing, and large datasets accelerated AI development
+  * What challenges still exist, such as bias, hallucinations, and lack of true understanding
+
+The answer is **factually grounded in the context** and **not copied verbatim**.
 
 ---
 
-##  Covered Topics
+## Covered Topics
 
-* Question Answering
-* Span Extraction
-* Transformer-based NLP
-* Model Evaluation (EM & F1)
-* Interactive Deployment (Streamlit)
+* Generative Question Answering
+* Transformer-based NLP (T5 / FLAN-T5)
+* Prompt engineering for controlled generation
+* Handling long documents with chunking
+* Interactive deployment using Streamlit
 
 ---
 
-##  Next Improvements
+## Limitations
 
-* Train for **more epochs** on full SQuAD → higher EM & F1.
-* Try **larger models** (`bert-base`, `roberta-base`).
-* Add **GPU acceleration** for faster training/evaluation.
+* The project uses a **small model (flan-t5-small)**, so answers may be concise.
+* The system does not perform formal evaluation (EM / F1), since answers are **generative**, not extractive.
+* Extremely long or ambiguous questions may require a larger model for best results.
+
+---
+
+## Possible Improvements
+
+* Upgrade to **flan-t5-base** or **flan-t5-large** for richer answers
+* Add automatic **answer confidence scoring**
+* Implement **answer comparison across chunks** for better aggregation
+* Add logging or evaluation on a custom QA dataset
+
+---
+
+### Final Note
+
+This project focuses on **practical, human-readable question answering**, prioritizing clarity and correctness over benchmark scores.
+It demonstrates how modern Transformer models can be used to build a usable QA system with minimal infrastructure.
