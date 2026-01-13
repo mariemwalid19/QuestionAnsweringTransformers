@@ -1,155 +1,197 @@
-# app.py
+import os
+os.environ["STREAMLIT_DISABLE_WATCHDOG"] = "true"
+
 import streamlit as st
-from transformers import pipeline, AutoTokenizer, AutoModelForQuestionAnswering
-import os, json
-import evaluate
-import pandas as pd
+from transformers import pipeline, AutoTokenizer, AutoModelForSeq2SeqLM
 from pathlib import Path
-from typing import Dict, List
 
-st.set_page_config(page_title="QA Demo — SQuAD / Transformers", layout="wide")
+if "file_text" not in st.session_state:
+    st.session_state.file_text = ""
 
-local_model_path = r"E:\Elevvo\QuestionAnsweringTransformers\distilbert-qa-quick-model"
+st.set_page_config(
+    page_title="Generative Question Answering — T5", 
+    layout="wide"
+)
+
+local_model_path = "google/flan-t5-small"
 
 @st.cache_resource(show_spinner=False)
-def load_pipeline(model_source: str, use_local: bool = True):
-    if use_local and Path(model_source).exists():
-        model_path = str(Path(model_source).resolve())
-        st.info(f" Using local model from: {model_path}")
-    else:
-        st.warning(f" Local folder '{model_source}' not found. Falling back to Hugging Face Hub.")
-        model_path = model_source
-
-    qa = pipeline("question-answering", model=model_path, tokenizer=model_path, device=-1)
-    return qa
+def load_generator(model_name: str):
+    generator = pipeline(
+        "text2text-generation",
+        model=model_name,
+        tokenizer=model_name,
+        device=-1
+    )
+    return generator
 
 
-def predict_answer(qa_pipeline, question: str, context: str, max_answer_len: int = 64):
+def predict_answer(generator, question: str, context: str, max_len: int):
     if not question or not context:
-        return {"answer": "", "score": 0.0}
-    try:
-        out = qa_pipeline({"question": question, "context": context}, max_answer_len=max_answer_len)
-        return {"answer": out.get("answer", ""), "score": float(out.get("score", 0.0))}
-    except Exception as e:
-        return {"answer": f"ERROR: {e}", "score": 0.0}
+        return ""
+    prompt = f"question: {question} context: {context}"
+    output = generator(
+        prompt,
+        max_length = max_len,
+        num_beams = 4,
+        do_sample = False
+    )
+    return output[0]["generated_text"]
 
-def read_squad_json(path: Path) -> List[Dict]:
-    with open(path, "r", encoding="utf-8") as f:
-        js = json.load(f)
-    rows = []
-    for art in js.get("data", []):
-        for para in art.get("paragraphs", []):
-            ctx = para["context"]
-            for qa in para["qas"]:
-                rows.append({
-                    "id": qa.get("id"),
-                    "question": qa.get("question"),
-                    "context": ctx,
-                    "answers_text": [a["text"] for a in qa.get("answers", [])],
-                    "answers_start": [a["answer_start"] for a in qa.get("answers", [])]
-                })
-    return rows
 
-def evaluate_on_squad(qa_pipeline, squad_rows: List[Dict], sample: int = None):
-    metric = evaluate.load("squad")
-    preds, refs = [], []
-    rows = squad_rows if sample is None else squad_rows[:sample]
-    for i, r in enumerate(rows):
-        q = r["question"]
-        ctx = r["context"]
-        gold = r["answers_text"]
-        try:
-            out = qa_pipeline({"question": q, "context": ctx}, max_answer_len=60)
-            pred_txt = out.get("answer", "")
-        except Exception:
-            pred_txt = ""
-        preds.append({"id": str(i), "prediction_text": pred_txt})
-        refs.append({"id": str(i), "answers": {"text": gold, "answer_start": r.get("answers_start", [])}})
-    return metric.compute(predictions=preds, references=refs)
+def split_text_into_chunks(text, max_words=300, overlap=50):
+    words = text.split()
+    chunks = []
+    start = 0
+    while start < len(words):
+        end = start + max_words
+        chunks.append(" ".join(words[start:end]))
+        start += max_words - overlap
+    return chunks
 
-st.title("Task 6 — Question Answering (SQuAD) — Streamlit Demo")
+def answer_with_chunking(generator, question, context, max_len, answer_style):
+    chunks = split_text_into_chunks(context)
+    answers = []
+
+    if answer_style == "Direct answer":
+        instruction = "Answer the question directly."
+    elif answer_style == "Detailed explanation":
+        instruction = "Answer in a detailed and explanatory way."
+    elif answer_style == "Reasoned answer (step by step)":
+        instruction = "Answer step by step and explain your reasoning."
+    elif answer_style == "Summarize then answer":
+        instruction = "Summarize the relevant information first, then answer the question."
+    else:
+        instruction = "Answer clearly and concisely."
+
+
+    for chunk in chunks:
+        prompt = f"""
+You are an expert reader.
+        
+Task:
+Answer the question based only on the context.
+        
+Rules:
+- Combine multiple ideas.
+- Do not copy sentences verbatim.
+- Provide a clear, complete answer.
+        
+Question:
+{question}
+        
+Context:
+{chunk}
+        
+Instruction:
+{instruction}
+"""
+        output = generator(
+            prompt,
+            max_length=max_len,
+            num_beams=4,
+            do_sample=False
+        )
+
+        answer = output[0]["generated_text"].strip()
+        if answer:
+            answers.append(answer)
+
+    if not answers:
+        return "No answer found."
+
+    def score_answer(ans):
+        length_score = min(len(ans.split()), 80)
+        structure_bonus = 20 if ans.count(".") >= 1 else 0
+        idea_bonus = 10 if ans.count(",") >= 1 else 0
+        return length_score + structure_bonus + idea_bonus
+
+    return max(answers, key=score_answer)
+
+
+st.title("Generative Question Answering — T5")
 st.markdown(
     """
-This app:  
-- loads a fine-tuned QA model (default: local `distilbert-qa-quick-model/` if present),  
-- answers a user question given a passage, and  
-- can evaluate EM & F1 on an uploaded SQuAD v1.1 JSON file (or a sample of it).
+This app:
+- loads a fine-tuned **generative QA model (T5)**,
+- accepts long documents or articles as context,
+- generates answers based on semantic understanding.
 """
 )
+
 
 st.sidebar.header("Model & Options")
 use_local_checkbox = st.sidebar.checkbox("Prefer local model if present", value=True)
 model_choice = st.sidebar.selectbox(
     "Model (local folder or HF model name):",
-    options=[local_model_path, "distilbert-base-uncased", "bert-base-uncased", "roberta-base", "albert-base-v2"],
+    options=[
+        local_model_path, 
+        "t5-small",
+        "google/flan-t5-small"
+        ],
     index=0
 )
-st.sidebar.markdown("If you select a Hugging Face name the model will be downloaded (internet required).")
+st.sidebar.markdown("Only **Seq2Seq (T5-style)** models are supported.")
 
 with st.spinner("Loading model pipeline (cached)..."):
-    qa_pipe = load_pipeline(model_choice, use_local=use_local_checkbox)
+    generator = load_generator(model_choice)
 
 st.subheader("Interactive QA")
+uploaded_file = st.file_uploader(
+    "Upload a TXT file (optional)",
+    type=["txt"],
+    key="txt_uploader"
+)
+
+if uploaded_file and st.session_state.file_text == "":
+    st.session_state.file_text = uploaded_file.read().decode("utf-8")
+    st.success("TXT file loaded successfully.")
+
+
 col1, col2 = st.columns([1, 1])
 with col1:
     context_text = st.text_area("Paste the context / passage here (long texts OK)", height=260)
 with col2:
     question_text = st.text_input("Question", value="")
     max_len = st.slider("Max answer length (tokens)", 5, 128, 64)
+    answer_style = st.selectbox(
+        "Answer style",
+        options=[
+            "Direct answer",
+            "Detailed explanation",
+            "Reasoned answer (step by step)",
+            "Summarize then answer"
+        ]
+    )
     if st.button("Get Answer"):
-        if not context_text.strip() or not question_text.strip():
-            st.warning("Please paste a context and type a question.")
+        final_context = ""
+
+        if st.session_state.file_text.strip():
+            final_context = st.session_state.file_text
+        else:
+            final_context = context_text
+
+        if not final_context.strip() or not question_text.strip():
+            st.warning("Please provide a context (text or file) and a question.")
         else:
             with st.spinner("Running model..."):
-                res = predict_answer(qa_pipe, question_text.strip(), context_text.strip(), max_answer_len=max_len)
+                answer = answer_with_chunking(
+                    generator,
+                    question_text.strip(),
+                    final_context.strip(),
+                    max_len,
+                    answer_style
+                )
             st.markdown("**Answer:**")
-            st.success(res["answer"])
-            st.write(f"Confidence score: {res['score']:.4f}")
-
-st.markdown("---")
-st.subheader("Batch Evaluation (Exact Match & F1)")
-
-st.markdown(
-    """
-Upload a **SQuAD v1.1 JSON** file (train or dev).  
-For speed, the app evaluates a small sample by default (you can increase or evaluate full set if you have CPU/GPU time).
-"""
-)
-
-uploaded_file = st.file_uploader("Upload SQuAD v1.1 JSON (optional)", type=["json"])
-sample_size = st.number_input("Number of examples to evaluate (small → fast)", min_value=20, max_value=5000, value=200, step=20)
-evaluate_button = st.button("Run Evaluation on Uploaded File")
-
-if uploaded_file is not None:
-    tmp_path = Path("uploaded_squad.json")
-    with open(tmp_path, "wb") as f:
-        f.write(uploaded_file.getbuffer())
-    st.success("Uploaded SQuAD file saved.")
-    try:
-        squad_rows = read_squad_json(tmp_path)
-        st.info(f"Parsed {len(squad_rows)} QA pairs from uploaded file.")
-    except Exception as e:
-        st.error(f"Failed to parse JSON: {e}")
-        squad_rows = []
-else:
-    squad_rows = []
-
-if evaluate_button:
-    if not squad_rows:
-        st.error("Upload a SQuAD JSON file first.")
-    else:
-        st.info(f"Running evaluation (sample={sample_size}) — this may take a while.")
-        with st.spinner("Running QA pipeline over examples..."):
-            metrics = evaluate_on_squad(qa_pipe, squad_rows, sample=min(sample_size, len(squad_rows)))
-        st.success("Evaluation complete.")
-        st.write(metrics)
+            st.success(answer)
 
 st.markdown("---")
 st.subheader("Tips & Notes")
 st.markdown(
     """
-- For a fast demo, use `distilbert-base-uncased` or your local `distilbert-qa-quick-model/`.  
-- For best accuracy, fine-tune `bert-base-uncased`/`roberta-base` on the whole SQuAD train set (requires GPU & more time).  
-- The evaluation shown here uses the SQuAD v1.1 metric (Exact Match & F1) as requested in Task 6.  
+**Notes:**
+- This system performs **generative question answering** using a text-to-text Transformer.
+- Answers are generated, not extracted verbatim from the passage.
+- Large documents can be handled via chunking (future enhancement).
 """
 )
