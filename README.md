@@ -1,4 +1,4 @@
-#  Task 6 — Question Answering with Transformers
+Question Answering with Transformers
 
 ##  Project Overview
 
